@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SubmitButton } from "@/components/ui/submit-button";
 import Link from "next/link";
 import { snoozeTask, setTaskCompleted } from "@/app/boards/actions";
 
@@ -74,11 +75,11 @@ function AlertRow({ task, kind }: { task: Awaited<ReturnType<typeof getAlertTask
         <form action={snoozeTask}>
           <input type="hidden" name="id" value={task.id} />
           <input type="hidden" name="days" value="3" />
-          <Button size="sm" variant="outline">Snooze 3d</Button>
+          <SubmitButton size="sm" variant="outline">Snooze 3d</SubmitButton>
         </form>
         <form action={setTaskCompleted}>
           <input type="hidden" name="id" value={task.id} />
-          <Button size="sm" variant="secondary">Mark done</Button>
+          <SubmitButton size="sm" variant="secondary">Mark done</SubmitButton>
         </form>
         <Link href={`/boards/${task.boardId}`}>
           <Button size="sm" variant="ghost">Open board</Button>

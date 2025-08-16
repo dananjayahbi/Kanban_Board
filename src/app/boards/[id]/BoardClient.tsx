@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MoreVertical, Pencil, Plus, Trash2 } from "lucide-react";
-import { addTask, updateTask, deleteTask, moveTask, createColumn, updateColumn, deleteColumn } from "@/app/boards/actions";
+import { addTask, updateTask, deleteTask, createColumn, updateColumn, deleteColumn } from "@/app/boards/actions";
 import { Badge } from "@/components/ui/badge";
 import { useWS } from "@/hooks/use-ws";
+import * as Lucide from "lucide-react";
 
 type Column = {
   id: string;
@@ -34,18 +36,119 @@ export default function BoardClient({
   board,
   priorities = [],
 }: {
-  board: { id: string; title: string; color: string | null; columns: Column[] };
+  board: { id: string; title: string; color: string | null; isFavorite?: boolean; columns: Column[] };
   priorities?: { id: string; name: string; color: string }[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
-  useWS();
+  const [cols, setCols] = useState<Column[]>(() => JSON.parse(JSON.stringify(board.columns)) as Column[]);
+  const { connected, send } = useWS();
+
+  // Local queue for instant UI + eventual DB consistency
+  const storageKey = useMemo(() => `pendingMoves:${board.id}`, [board.id]);
+  const getQueue = useCallback((): any[] => {
+    if (typeof window === "undefined") return [];
+    try { return JSON.parse(localStorage.getItem(storageKey) || "[]"); } catch { return []; }
+  }, [storageKey]);
+  const setQueue = useCallback((q: any[]) => {
+    try { localStorage.setItem(storageKey, JSON.stringify(q)); } catch {}
+  }, [storageKey]);
+  const applyLocalMove = useCallback((taskId: string, toColumnId: string) => {
+    setCols((prev) => {
+      const next = prev.map((c) => ({ ...c, tasks: [...c.tasks] }));
+      // Skip if already in target
+      const already = next.some((c) => c.id === toColumnId && c.tasks.some((t) => t.id === taskId));
+      if (already) return next;
+      let moved: Task | null = null;
+      for (const c of next) {
+        const idx = c.tasks.findIndex((t) => t.id === taskId);
+        if (idx >= 0) { moved = c.tasks.splice(idx, 1)[0] as any; break; }
+      }
+      if (moved) {
+        const dest = next.find((c) => c.id === toColumnId);
+        if (dest) dest.tasks.push(moved);
+      }
+      return next;
+    });
+  }, []);
+
+  // Reconcile pending moves when page is visible/online
+  useEffect(() => {
+    const reconcile = () => {
+      const q = getQueue();
+      for (const mv of q) {
+        if (mv?.taskId && mv?.toColumnId) {
+          applyLocalMove(mv.taskId, mv.toColumnId);
+          send({ type: "task:move", taskId: mv.taskId, toColumnId: mv.toColumnId, boardId: board.id });
+        }
+      }
+    };
+    reconcile();
+    const onVis = () => { if (document.visibilityState === "visible") reconcile(); };
+    const onOnline = () => reconcile();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [board.id, getQueue, applyLocalMove, send]);
+
+  // Listen to WS events and update UI immediately for smoother UX
+  useEffect(() => {
+    const handler = (e: any) => {
+      const msg = e.detail as { event: string; payload: any };
+      if (!msg?.event) return;
+      switch (msg.event) {
+        case "task:moved": {
+          const { taskId, toColumnId } = msg.payload || {};
+          if (!taskId || !toColumnId) return;
+          setCols((prev) => {
+            const next = prev.map((c) => ({ ...c, tasks: [...c.tasks] }));
+            let moved: Task | null = null;
+            for (const c of next) {
+              const idx = c.tasks.findIndex((t) => t.id === taskId);
+              if (idx >= 0) {
+                moved = c.tasks.splice(idx, 1)[0] as any;
+                break;
+              }
+            }
+            if (moved) {
+              const dest = next.find((c) => c.id === toColumnId);
+              if (dest) dest.tasks.push(moved);
+            }
+            return next;
+          });
+          // Ack: clear from local pending queue
+          const rest = getQueue().filter((x: any) => !(x.taskId === taskId && x.toColumnId === toColumnId));
+          setQueue(rest);
+          break;
+        }
+        case "task:created":
+        case "task:updated":
+        case "task:deleted":
+        case "column:created":
+        case "column:updated":
+        case "column:deleted": {
+          // For simplicity, refresh on structural changes
+          if (typeof window !== "undefined") window.location.reload();
+          break;
+        }
+        default:
+          break;
+      }
+    };
+    window.addEventListener("app:ws", handler as any);
+    return () => window.removeEventListener("app:ws", handler as any);
+  }, [connected]);
 
   const onDragStartTask = useCallback((e: React.DragEvent, taskId: string, fromColumnId: string) => {
     e.dataTransfer.setData("text/taskId", taskId);
     e.dataTransfer.setData("text/fromColumnId", fromColumnId);
     e.dataTransfer.setData("text/boardId", board.id);
     e.dataTransfer.effectAllowed = "move";
+    // Announce drag start (optional)
+    send({ type: "drag:start", taskId, fromColumnId, boardId: board.id });
   }, [board.id]);
 
   const onDropOnColumn = useCallback((e: React.DragEvent, toColumnId: string) => {
@@ -53,25 +156,37 @@ export default function BoardClient({
     const taskId = e.dataTransfer.getData("text/taskId");
     const boardId = e.dataTransfer.getData("text/boardId");
     if (!taskId || !boardId) return;
-    const fd = new FormData();
-    fd.set("taskId", taskId);
-    fd.set("toColumnId", toColumnId);
-    fd.set("boardId", boardId);
-    startTransition(() => moveTask(fd));
+    // 1) Instant UI
+    applyLocalMove(taskId, toColumnId);
+    // 2) Queue for eventual persistence
+    const q = getQueue();
+    q.push({ taskId, toColumnId, ts: Date.now() });
+    setQueue(q);
+    // 3) Notify via WS (server will persist and broadcast)
+    send({ type: "task:move", taskId, toColumnId, boardId });
     setDragOverColumn(null);
-  }, []);
+  }, [applyLocalMove, getQueue, setQueue, send]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
           <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: board.color ?? "#6366f1" }} />
+          {(() => {
+            const P = (Lucide as any)[(board as any).icon];
+            return P ? <P className="h-5 w-5" /> : null;
+          })()}
           {board.title}
         </h1>
-        <CreateColumnDialog boardId={board.id} />
+        <div className="flex items-center gap-2">
+          {typeof board.isFavorite !== "undefined" && (
+            <FavoriteSlot id={board.id} isFavorite={board.isFavorite} />
+          )}
+          <CreateColumnDialog boardId={board.id} />
+        </div>
       </div>
       <div className="grid auto-cols-[320px] grid-flow-col gap-4 overflow-x-auto pb-2">
-        {board.columns.map((col) => (
+  {cols.map((col) => (
           <Card
             key={col.id}
             className={`min-w-[320px] ${dragOverColumn === col.id ? "ring-2 ring-primary" : ""}`}
@@ -109,6 +224,16 @@ export default function BoardClient({
   );
 }
 
+function FavoriteSlot({ id, isFavorite }: { id: string; isFavorite?: boolean }) {
+  // Lazy import to avoid SSR issues
+  const [ClientComp, setClientComp] = useState<any>(null);
+  useEffect(() => {
+    import("@/components/boards/FavoriteToggle").then((m) => setClientComp(() => m.default));
+  }, []);
+  if (!ClientComp) return null;
+  return <ClientComp id={id} isFavorite={isFavorite} size="sm" />;
+}
+
 function CreateColumnDialog({ boardId }: { boardId: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -118,7 +243,7 @@ function CreateColumnDialog({ boardId }: { boardId: string }) {
           <Plus className="h-4 w-4" /> Add List
         </Button>
       </DialogTrigger>
-      <DialogContent>
+  <DialogContent className="max-h-[75vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>New List</DialogTitle>
         </DialogHeader>
@@ -143,7 +268,7 @@ function CreateColumnDialog({ boardId }: { boardId: string }) {
             <Input id="wipLimit" name="wipLimit" type="number" min={0} placeholder="Optional" />
           </div>
           <DialogFooter>
-            <Button type="submit">Create</Button>
+            <SubmitButton>Create</SubmitButton>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -167,7 +292,7 @@ function ColumnMenu({ boardId, columnId, title, currentColor }: { boardId: strin
               <Pencil className="h-4 w-4" /> Edit list
             </DropdownMenuItem>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[75vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit List</DialogTitle>
             </DialogHeader>
@@ -187,7 +312,7 @@ function ColumnMenu({ boardId, columnId, title, currentColor }: { boardId: strin
                 <Input id={`wip-${columnId}`} name="wipLimit" type="number" min={0} placeholder="Optional" />
               </div>
               <DialogFooter>
-                <Button type="submit">Save</Button>
+                <SubmitButton>Save</SubmitButton>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -196,9 +321,9 @@ function ColumnMenu({ boardId, columnId, title, currentColor }: { boardId: strin
           <input type="hidden" name="id" value={columnId} />
           <input type="hidden" name="boardId" value={boardId} />
           <DropdownMenuItem asChild onSelect={(e) => e.preventDefault()} className="text-red-600">
-            <button type="submit" className="w-full flex items-center gap-2">
+            <SubmitButton variant="ghost" className="w-full flex items-center gap-2">
               <Trash2 className="h-4 w-4" /> Delete list
-            </button>
+            </SubmitButton>
           </DropdownMenuItem>
         </form>
       </DropdownMenuContent>
@@ -215,7 +340,7 @@ function AddTaskDialog({ boardId, columnId, priorities }: { boardId: string; col
           <Plus className="h-4 w-4" />
         </Button>
       </DialogTrigger>
-      <DialogContent>
+  <DialogContent className="max-h-[75vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>New Task</DialogTitle>
         </DialogHeader>
@@ -250,7 +375,7 @@ function AddTaskDialog({ boardId, columnId, priorities }: { boardId: string; col
             </div>
           )}
           <DialogFooter>
-            <Button type="submit">Add Task</Button>
+            <SubmitButton>Add Task</SubmitButton>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -339,7 +464,7 @@ function TaskMenu({ task, boardId }: { task: Task & { priority?: { id: string; n
                 </div>
               )}
               <DialogFooter>
-                <Button type="submit">Save</Button>
+                <SubmitButton>Save</SubmitButton>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -348,9 +473,9 @@ function TaskMenu({ task, boardId }: { task: Task & { priority?: { id: string; n
           <input type="hidden" name="id" value={task.id} />
           <input type="hidden" name="boardId" value={boardId} />
           <DropdownMenuItem asChild onSelect={(e) => e.preventDefault()} className="text-red-600">
-            <button type="submit" className="w-full flex items-center gap-2">
+            <SubmitButton variant="ghost" className="w-full flex items-center gap-2">
               <Trash2 className="h-4 w-4" /> Delete
-            </button>
+            </SubmitButton>
           </DropdownMenuItem>
         </form>
       </DropdownMenuContent>

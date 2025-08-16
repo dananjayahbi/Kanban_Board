@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useWS() {
   const ref = useRef<WebSocket | null>(null);
@@ -29,5 +29,11 @@ export function useWS() {
     return () => ws.removeEventListener("message", onMessage);
   }, [connected]);
 
-  return { connected };
+  const send = useCallback((data: any) => {
+    try {
+      ref.current?.send(JSON.stringify(data));
+    } catch {}
+  }, []);
+
+  return { connected, send };
 }

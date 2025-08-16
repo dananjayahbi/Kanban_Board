@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createPriority, deletePriority, updatePriority } from "@/app/boards/actions";
@@ -47,11 +48,11 @@ function CreateDialog() {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>New Priority Label</DialogTitle></DialogHeader>
-        <form action={createPriority} className="space-y-4">
+  <form action={createPriority} className="space-y-4">
           <div className="space-y-2"><label className="text-sm font-medium" htmlFor="name">Name</label><Input id="name" name="name" required /></div>
           <div className="space-y-2"><label className="text-sm font-medium" htmlFor="color">Color</label><Input id="color" name="color" type="color" defaultValue="#ef4444" /></div>
           <div className="space-y-2"><label className="text-sm font-medium" htmlFor="level">Level</label><Input id="level" name="level" type="number" defaultValue={0} /></div>
-          <DialogFooter><Button type="submit">Create</Button></DialogFooter>
+          <DialogFooter><SubmitButton>Create</SubmitButton></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -66,12 +67,12 @@ function EditDialog({ item }: { item: { id: string; name: string; color: string;
       </DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>Edit Priority</DialogTitle></DialogHeader>
-        <form action={updatePriority} className="space-y-4">
+  <form action={updatePriority} className="space-y-4">
           <input type="hidden" name="id" value={item.id} />
           <div className="space-y-2"><label className="text-sm font-medium" htmlFor={`name-${item.id}`}>Name</label><Input id={`name-${item.id}`} name="name" defaultValue={item.name} required /></div>
           <div className="space-y-2"><label className="text-sm font-medium" htmlFor={`color-${item.id}`}>Color</label><Input id={`color-${item.id}`} name="color" type="color" defaultValue={item.color} /></div>
           <div className="space-y-2"><label className="text-sm font-medium" htmlFor={`level-${item.id}`}>Level</label><Input id={`level-${item.id}`} name="level" type="number" defaultValue={item.level} /></div>
-          <DialogFooter><Button type="submit">Save</Button></DialogFooter>
+          <DialogFooter><SubmitButton>Save</SubmitButton></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

@@ -5,12 +5,17 @@ import BoardClient from "./BoardClient";
 export const dynamic = "force-dynamic";
 
 async function getBoard(id: string) {
-  const board = await prisma.board.findUnique({
+  const pb = (prisma as any).board;
+  const board = await pb.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      title: true,
+      color: true,
+      isFavorite: true,
       columns: {
         orderBy: { order: "asc" },
-  include: { tasks: { orderBy: { order: "asc" }, include: { priority: true } } },
+        include: { tasks: { orderBy: { order: "asc" }, include: { priority: true } } },
       },
     },
   });
@@ -24,7 +29,7 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
   const priorities = await prisma.priorityLabel.findMany({ orderBy: { level: "asc" } }).catch(() => []);
   return (
     <BoardClient
-      board={{ id: board.id, title: board.title, color: board.color, columns: board.columns as any }}
+  board={{ id: board.id, title: board.title, color: board.color, isFavorite: (board as any).isFavorite, columns: board.columns as any }}
       priorities={priorities as any}
     />
   );

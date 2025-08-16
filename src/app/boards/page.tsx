@@ -11,11 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { createBoard } from "./actions";
 import BoardActions from "@/components/boards/BoardActions";
 import CreateBoardDialog from "./CreateBoardDialog";
+import FavoriteToggle from "@/components/boards/FavoriteToggle";
+import * as Lucide from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 async function getBoards() {
-  return prisma.board.findMany({
+  const pb = (prisma as any).board;
+  return pb.findMany({
     include: {
       columns: {
         include: { tasks: true },
@@ -41,7 +44,7 @@ export default async function BoardsPage() {
         <EmptyState />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {boards.map((b: BoardWithCounts) => {
+          {boards.map((b: BoardWithCounts & { isFavorite?: boolean }) => {
             const taskCount = b.columns.reduce((sum: number, c: BoardWithCounts["columns"][number]) => sum + c.tasks.length, 0);
             const done = b.columns.find((c: BoardWithCounts["columns"][number]) => c.title.toLowerCase() === "done");
             const doneCount = done?.tasks.length ?? 0;
@@ -52,9 +55,13 @@ export default async function BoardsPage() {
                     <CardTitle className="flex items-center gap-2 justify-between">
                       <span className="flex items-center gap-2">
                         <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: b.color ?? "#6366f1" }} />
+                        <BoardIcon name={(b as any).icon} />
                         {b.title}
                       </span>
-                      <BoardActions board={b} />
+                      <div className="flex items-center gap-1">
+                        <FavoriteToggle id={b.id} isFavorite={(b as any).isFavorite} />
+                        <BoardActions board={b} />
+                      </div>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="text-sm text-muted-foreground flex items-center gap-2">
@@ -70,6 +77,12 @@ export default async function BoardsPage() {
       )}
     </div>
   );
+}
+
+function BoardIcon({ name }: { name?: string | null }) {
+  const P = (name && (Lucide as any)[name as keyof typeof Lucide]) as any;
+  if (!P) return null;
+  return <P className="h-4 w-4" />;
 }
 
 function EmptyState() {

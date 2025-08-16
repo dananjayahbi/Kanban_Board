@@ -15,6 +15,9 @@ model Board {
   title       String
   description String?
   color       String? // hex for UI accent
+  icon        String? // lucide-react icon name
+  isFavorite  Boolean  @default(false)
+  favoriteAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   columns     Column[]

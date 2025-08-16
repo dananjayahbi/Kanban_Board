@@ -2,17 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { publish } from "@/lib/ws";
 
 export async function createBoard(formData: FormData) {
   const title = String(formData.get("title") || "").trim();
   const description = String(formData.get("description") || "").trim();
   const color = String(formData.get("color") || "#6366f1");
+  const icon = String(formData.get("icon") || "").trim() || randomIcon();
   if (!title) return;
   await prisma.board.create({
     data: {
       title,
       description,
       color,
+      icon,
       columns: {
         create: [
           { title: "Backlog", order: 0, color: randomColor() },
@@ -31,8 +34,9 @@ export async function updateBoard(formData: FormData) {
   const title = String(formData.get("title") || "").trim();
   const description = String(formData.get("description") || "").trim();
   const color = String(formData.get("color") || "#6366f1");
+  const icon = String(formData.get("icon") || "").trim();
   if (!id || !title) return;
-  await prisma.board.update({ where: { id }, data: { title, description, color } });
+  await prisma.board.update({ where: { id }, data: { title, description, color, icon: icon || undefined } });
   revalidatePath("/boards");
 }
 
@@ -61,7 +65,7 @@ export async function addTask(formData: FormData) {
   if (!title || !boardId || !columnId) return;
   const last = await prisma.task.findFirst({ where: { columnId }, orderBy: { order: "desc" } });
   const order = (last?.order ?? 0) + 1;
-  await prisma.task.create({
+  const created = await prisma.task.create({
     data: {
       title,
       description,
@@ -74,6 +78,7 @@ export async function addTask(formData: FormData) {
     },
   });
   revalidatePath(`/boards/${boardId}`);
+  publish("task:created", { boardId, columnId, task: created });
 }
 
 export async function toggleTask(formData: FormData) {
@@ -94,7 +99,7 @@ export async function updateTask(formData: FormData) {
   const color = String(formData.get("color") || "");
   const priorityId = String(formData.get("priorityId") || "");
   if (!id || !title) return;
-  await prisma.task.update({
+  const updated = await prisma.task.update({
     where: { id },
     data: {
       title,
@@ -105,6 +110,7 @@ export async function updateTask(formData: FormData) {
     },
   });
   if (boardId) revalidatePath(`/boards/${boardId}`);
+  if (boardId) publish("task:updated", { boardId, task: updated });
 }
 
 export async function deleteTask(formData: FormData) {
@@ -114,6 +120,7 @@ export async function deleteTask(formData: FormData) {
   await prisma.subtask.deleteMany({ where: { taskId: id } });
   await prisma.task.delete({ where: { id } });
   if (boardId) revalidatePath(`/boards/${boardId}`);
+  if (boardId) publish("task:deleted", { boardId, taskId: id });
 }
 
 export async function moveTask(formData: FormData) {
@@ -125,6 +132,7 @@ export async function moveTask(formData: FormData) {
   const order = (last?.order ?? 0) + 1;
   await prisma.task.update({ where: { id: taskId }, data: { columnId: toColumnId, order } });
   if (boardId) revalidatePath(`/boards/${boardId}`);
+  if (boardId) publish("task:moved", { boardId, taskId, toColumnId, order });
 }
 
 export async function snoozeTask(formData: FormData) {
@@ -160,8 +168,9 @@ export async function createColumn(formData: FormData) {
   if (!boardId || !title) return;
   const last = await prisma.column.findFirst({ where: { boardId }, orderBy: { order: "desc" } });
   const order = (last?.order ?? 0) + 1;
-  await prisma.column.create({ data: { boardId, title, order, color: color || randomColor(), wipLimit: wipStr ? Number(wipStr) : null } });
+  const col = await prisma.column.create({ data: { boardId, title, order, color: color || randomColor(), wipLimit: wipStr ? Number(wipStr) : null } });
   revalidatePath(`/boards/${boardId}`);
+  publish("column:created", { boardId, column: col });
 }
 
 export async function updateColumn(formData: FormData) {
@@ -171,8 +180,9 @@ export async function updateColumn(formData: FormData) {
   const color = String(formData.get("color") || "");
   const wipStr = String(formData.get("wipLimit") || "");
   if (!id || !title) return;
-  await prisma.column.update({ where: { id }, data: { title, color: color || undefined, wipLimit: wipStr ? Number(wipStr) : null } });
+  const col = await prisma.column.update({ where: { id }, data: { title, color: color || undefined, wipLimit: wipStr ? Number(wipStr) : null } });
   if (boardId) revalidatePath(`/boards/${boardId}`);
+  if (boardId) publish("column:updated", { boardId, column: col });
 }
 
 export async function deleteColumn(formData: FormData) {
@@ -185,6 +195,7 @@ export async function deleteColumn(formData: FormData) {
   await prisma.task.deleteMany({ where: { columnId: id } });
   await prisma.column.delete({ where: { id } });
   if (boardId) revalidatePath(`/boards/${boardId}`);
+  if (boardId) publish("column:deleted", { boardId, columnId: id });
 }
 
 // Priority labels CRUD
@@ -217,4 +228,41 @@ export async function deletePriority(formData: FormData) {
 function randomColor() {
   const palette = ["#6366f1", "#22c55e", "#eab308", "#ef4444", "#06b6d4", "#a855f7", "#f97316"];
   return palette[Math.floor(Math.random() * palette.length)];
+}
+
+function randomIcon() {
+  const icons = [
+    "FolderKanban",
+    "LayoutGrid",
+    "ClipboardList",
+    "Rocket",
+    "Layers",
+    "CalendarDays",
+    "Kanban",
+    "ListChecks",
+  ];
+  return icons[Math.floor(Math.random() * icons.length)];
+}
+
+// Favorites
+export async function toggleFavorite(formData: FormData) {
+  const id = String(formData.get("id"));
+  if (!id) return;
+  const pb = (prisma as any).board;
+  const board = await pb.findUnique({ where: { id }, select: { id: true, isFavorite: true } });
+  if (!board) return;
+  if (board.isFavorite) {
+    await pb.update({ where: { id }, data: { isFavorite: false, favoriteAt: null } });
+  } else {
+    const count = await pb.count({ where: { isFavorite: true } });
+    if (count >= 7) {
+      // Enforce max 7 favorites; silently ignore if limit reached
+      return;
+    }
+    await pb.update({ where: { id }, data: { isFavorite: true, favoriteAt: new Date() } });
+  }
+  // Refresh relevant views (boards page, specific board, and layout for sidebar)
+  revalidatePath("/boards");
+  revalidatePath(`/boards/${id}`);
+  revalidatePath("/", "layout");
 }
