@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,7 @@ import { MoreVertical } from "lucide-react";
 import { updateBoard, deleteBoard } from "@/app/boards/actions";
 
 export default function BoardActions({ board }: { board: { id: string; title: string; description: string | null; color: string | null } }) {
+  const [open, setOpen] = React.useState(false);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -24,7 +26,7 @@ export default function BoardActions({ board }: { board: { id: string; title: st
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        <Dialog>
+        <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <DropdownMenuItem onSelect={(e) => e.preventDefault()}>Edit</DropdownMenuItem>
           </DialogTrigger>
@@ -32,7 +34,7 @@ export default function BoardActions({ board }: { board: { id: string; title: st
             <DialogHeader>
               <DialogTitle>Edit Board</DialogTitle>
             </DialogHeader>
-            <form action={updateBoard} className="space-y-4">
+            <form action={async (fd) => { await updateBoard(fd); setOpen(false); }} className="space-y-4">
               <input type="hidden" name="id" value={board.id} />
               <div className="space-y-2">
                 <label className="text-sm font-medium" htmlFor={`title-${board.id}`}>Title</label>
