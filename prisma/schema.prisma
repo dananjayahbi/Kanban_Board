@@ -1,0 +1,82 @@
+// Prisma schema for MongoDB Kanban app
+// Datasource: MongoDB (requires Prisma MongoDB connector)
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+model Board {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  color       String? // hex for UI accent
+  icon        String? // lucide-react icon name
+  isFavorite  Boolean  @default(false)
+  favoriteAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  columns     Column[]
+}
+
+model Column {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  title     String
+  order     Int      // for sorting columns left-to-right
+  color     String?  // hex color for ribbon
+  wipLimit  Int?     // optional Work-In-Progress limit
+  board     Board    @relation(fields: [boardId], references: [id])
+  boardId   String   @db.ObjectId
+  tasks     Task[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([boardId, order])
+}
+
+model Task {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  color       String?   // optional color ribbon
+  priority    PriorityLabel? @relation(fields: [priorityId], references: [id])
+  priorityId  String?   @db.ObjectId
+  dueDate     DateTime?
+  tags        String[]
+  completed   Boolean   @default(false)
+  order       Int       // within column
+  column      Column    @relation(fields: [columnId], references: [id])
+  columnId    String    @db.ObjectId
+  boardId     String    @db.ObjectId // denormalized for cross-page queries
+  subtasks    Subtask[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  @@index([boardId, completed])
+  @@index([columnId, order])
+  @@index([dueDate])
+}
+
+model Subtask {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  title     String
+  done      Boolean  @default(false)
+  task      Task     @relation(fields: [taskId], references: [id])
+  taskId    String   @db.ObjectId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PriorityLabel {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  color     String   // hex color for badge
+  level     Int      // sort order / severity
+  tasks     Task[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([name])
+  @@index([level])
+}
